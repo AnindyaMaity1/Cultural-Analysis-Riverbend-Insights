@@ -69,7 +69,7 @@ To run **Riverbend Insights**, you must host the `index2Qloo_api.html` file on a
 
 ## 🔧 Configuration
 
-Open `index2Qloo_api.html` and find the script block:
+Open `QLOO.html` and find the script block:
 
 ```javascript
 // Firebase configuration
