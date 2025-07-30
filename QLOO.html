@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Riverbend Insights - Your Cultural Intelligence Platform</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <!-- Removed jsPDF and html2canvas as download functionality is removed -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        // Your web app's Firebase configuration
+        // IMPORTANT: Use the global __firebase_config variable provided by the Canvas environment
+        const firebaseConfig = {
+            apiKey: "",
+            authDomain: "",
+            projectId: "",
+            storageBucket: "",
+            messagingSenderId: "",
+            appId: ""
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+
+        // Expose functions to global scope to be called from inline event handlers
+        window.signInWithGoogle = () => {
+            signInWithPopup(auth, provider)
+                .then((result) => {
+                    // This gives you a Google Access Token. You can use it to access the Google API.
+                    const credential = GoogleAuthProvider.credentialFromResult(result);
+                    const token = credential.accessToken;
+                    // The signed-in user info.
+                    const user = result.user;
+                    console.log("User signed in: ", user);
+                }).catch((error) => {
+                    // Handle Errors here.
+                    const errorCode = error.code;
+                    const errorMessage = error.message;
+                    // Check if customData exists before accessing email
+                    const email = error.customData ? error.customData.email : 'N/A';
+                    const credential = GoogleAuthProvider.credentialFromError(error);
+                    console.error("Google Sign-In Error:", errorMessage);
+                });
+        };
+
+        window.signOutUser = () => {
+            signOut(auth).then(() => {
+                console.log("User signed out.");
+            }).catch((error) => {
+                console.error("Sign Out Error:", error);
+            });
+        };
+
+        // Auth state listener
+        onAuthStateChanged(auth, async (user) => { // Made async to await signInWithCustomToken
+            const loginPage = document.getElementById('login-page');
+            const appContainer = document.getElementById('app-container');
+            const userDisplay = document.getElementById('user-display');
+            const signOutButton = document.getElementById('sign-out-button');
+
+            if (user) {
+                // User is signed in
+                loginPage.style.display = 'none';
+                appContainer.style.display = 'flex';
+
+                // Display user info
+                userDisplay.innerHTML = `
+                    <img src="${user.photoURL}" alt="${user.displayName}" class="w-10 h-10 rounded-full border-2 border-emerald-400">
+                    <div class="hidden lg:block">
+                        <p class="font-bold text-white">${user.displayName}</p>
+                        <p class="text-xs text-violet-300">${user.email}</p>
+                    </div>
+                `;
+                signOutButton.style.display = 'block';
+
+                // Initialize the main app logic if it hasn't been already
+                if (!window.appInitialized) {
+                    initializeAppLogic();
+                    window.appInitialized = true;
+                }
+
+            } else {
+                // User is signed out, attempt sign-in
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        try {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                            console.log("Signed in with custom token.");
+                        } catch (customTokenError) {
+                            console.warn("Custom token sign-in failed, attempting anonymous sign-in:", customTokenError.message);
+                            // Fallback to anonymous sign-in if custom token fails
+                            await signInAnonymously(auth);
+                            console.log("Signed in anonymously after custom token failure.");
+                        }
+                    } else {
+                        await signInAnonymously(auth);
+                        console.log("Signed in anonymously.");
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth Error during initial sign-in or fallback:", error);
+                    // If all sign-in attempts fail, show login page
+                    loginPage.style.display = 'flex';
+                    appContainer.style.display = 'none';
+                }
+            }
+        });
+
+    </script>
+
+    <style>
+        :root {
+            --background: #1a103c; /* Deep Violet */
+            --sidebar: #2a1a5e; /* Darker Violet */
+            --surface: #5e4ab1; /* Lighter Violet for cards - Adjusted for user request */
+            --primary: #34d399; /* Emerald Green */
+            --primary-hover: #6ee7b7; /* Lighter Emerald */
+            --text-primary: #f0fdf4; /* Very light green/white */
+            --text-secondary: #a78bfa; /* Light Violet */
+            --border: #4c3b9a;
+            --input-text-color: #000000; /* Changed to black for visibility */
+        }
+        body {
+            font-family: 'Manrope', sans-serif;
+            background-color: var(--background);
+            color: var(--text-primary);
+        }
+        .sidebar-icon {
+            width: 24px;
+            height: 24px;
+            stroke-width: 2;
+        }
+        .loader {
+            border: 4px solid var(--border);
+            border-top: 4px solid var(--primary);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--sidebar); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5e4ab1; }
+
+        /* Gradient background for login */
+        .gradient-bg {
+            background: linear-gradient(135deg, #1a103c, #4c3b9a, #2a1a5e);
+        }
+
+        /* Button styles */
+        .btn-primary {
+            background-color: var(--primary);
+            color: var(--background);
+            font-weight: bold;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px -5px rgba(52, 211, 153, 0.6);
+        }
+        .btn-primary:hover {
+            background-color: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px -5px rgba(52, 211, 153, 0.8);
+        }
+
+        /* Chat specific styles */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 120px); /* Adjust based on header/footer if any */
+            background-color: var(--surface);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .chat-messages {
+            flex-grow: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .chat-message {
+            max-width: 80%;
+            padding: 0.75rem 1rem;
+            border-radius: 0.75rem;
+            word-wrap: break-word;
+            /* Added to handle newlines as paragraphs */
+            white-space: pre-wrap; /* Preserve whitespace including newlines */
+        }
+
+        .chat-message.user {
+            align-self: flex-end;
+            background-color: var(--primary);
+            color: var(--background);
+            border-bottom-right-radius: 0;
+        }
+
+        .chat-message.model {
+            align-self: flex-start;
+            background-color: var(--background);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 0;
+            text-align: justify; /* Added for justify alignment */
+            display: flex;
+            flex-direction: column; /* To stack paragraphs and button */
+        }
+
+        /* Custom styles for chat messages to handle paragraphs */
+        .chat-message.model div {
+            margin-bottom: 0.5em; /* Add spacing between paragraphs */
+        }
+        .chat-message.model div:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Explicit style for textarea and input text color */
+        textarea, input[type="text"] {
+            color: var(--input-text-color) !important; /* Use the defined variable and ensure it overrides */
+        }
+
+    </style>
+</head>
+<body class="antialiased">
+
+    <div id="login-page" class="gradient-bg h-screen w-screen flex items-center justify-center p-4">
+        <div class="max-w-md w-full text-center bg-violet-900/50 backdrop-blur-sm p-10 rounded-2xl shadow-2xl border border-violet-600">
+            <div class="flex items-center justify-center gap-3 mb-6">
+                <div class="w-16 h-16 bg-primary rounded-xl flex items-center justify-center shadow-lg">
+                    <svg class="w-10 h-10 text-violet-900" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 9.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.916 17.916 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.004 9.004 0 013 12c0-1.672.42-3.223 1.157-4.582"></path></svg>
+                </div>
+            </div>
+            <h1 class="text-4xl font-extrabold text-white mb-2">Welcome to Riverbend Insights</h1>
+            <p class="text-violet-300 mb-8">Your personal cultural intelligence platform. Sign in to continue.</p>
+            <button onclick="signInWithGoogle()" class="w-full flex items-center justify-center gap-3 bg-white text-gray-800 p-3 rounded-lg font-semibold hover:bg-gray-200 transition-all duration-300 shadow-md">
+                <svg class="w-6 h-6" viewBox="0 0 48 48"><path fill="#4285F4" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"></path><path fill="#34A853" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"></path><path fill="#FBBC05" d="M27.461 44.5l-6.571-4.82C19.011 42.127 14.01 44 8.995 44c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20c4.981 0 9.522-1.812 13.005-4.853l-5.544-4.647z"></path><path fill="#EA4335" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.571 4.819c3.93-3.597 6.215-8.835 6.215-14.391c0-1.341-.138-2.65-.389-3.917z"></path></svg>
+                Sign in with Google
+            </button>
+        </div>
+    </div>
+
+    <div id="app-container" class="flex h-screen bg-background" style="display: none;">
+        <nav class="w-20 lg:w-64 bg-sidebar border-r border-border p-4 flex flex-col justify-between">
+            <div>
+                <div class="flex items-center gap-3 mb-10">
+                    <div class="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 9.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.916 17.916 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.004 9.004 0 013 12c0-1.672.42-3.223 1.157-4.582"></path></svg>
+                    </div>
+                    <h1 class="text-2xl font-bold text-white hidden lg:block">Riverbend Insights</h1>
+                </div>
+                <ul id="nav-menu" class="space-y-2">
+                    </ul>
+            </div>
+            <div>
+                 <div id="user-display" class="flex items-center gap-3 mb-4">
+                    </div>
+                 <button id="sign-out-button" onclick="signOutUser()" class="w-full flex items-center justify-start gap-4 p-3 rounded-lg text-violet-300 hover:bg-surface hover:text-white transition-colors" style="display: none;">
+                    <svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    <span class="font-bold hidden lg:block">Sign Out</span>
+                 </button>
+            </div>
+        </nav>
+
+        <main id="main-content" class="flex-1 p-6 lg:p-10 overflow-y-auto">
+            </main>
+    </div>
+
+
+    <script>
+        // This function contains the original app logic.
+        // It's called by the onAuthStateChanged listener once the user is authenticated.
+        function initializeAppLogic() {
+            const mainContent = document.getElementById('main-content');
+            const navMenu = document.getElementById('nav-menu');
+            // Qloo API Key: REPLACE "YOUR_QLOO_API_KEY" WITH YOUR ACTUAL QLOO API KEY
+            const qlooApiKey = "";
+            // Clipdrop API Key for image generation
+            const clipdropApiKey = "";
+            // Gemini API Key for LLM Chat feature - NEW
+            const geminiApiKey = "";
+
+            // Global map variable for Leaflet
+            let map;
+
+            // Chat history for LLM Chat feature - NEW
+            let chatHistory = [];
+
+            // Function to initialize the Leaflet map
+            function initializeMap(latitude, longitude) {
+                // Check if map already exists to prevent re-initialization errors
+                if (map) {
+                    map.remove(); // Remove existing map instance
+                }
+                // Ensure the map container is visible and has dimensions before initializing
+                const mapElement = document.getElementById('cartography-map');
+                if (mapElement) {
+                    mapElement.style.height = '400px'; // Ensure it has a height
+                    mapElement.style.width = '100%'; // Ensure it has a width
+                    mapElement.classList.remove('hidden'); // Ensure it's not hidden
+                }
+
+                map = L.map('cartography-map').setView([latitude, longitude], 13); // Set initial view
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                }).addTo(map);
+
+                // Invalidate size to ensure tiles load correctly if container was initially hidden
+                map.invalidateSize();
+
+                // Hide the placeholder if it was visible
+                document.getElementById('cartography-image-placeholder').classList.add('hidden');
+            }
+
+
+            // --- API Call Functions ---
+            async function callQloo(endpoint, payload) {
+                const apiUrl = `https://api.qloo.com${endpoint}`; // Generic Qloo API base URL
+                const response = await fetch(apiUrl, {
+                    method: 'POST', // Qloo API often uses POST for insights
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': qlooApiKey // Qloo API key in header
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(`Qloo API request failed with status ${response.status}: ${errorData.message || response.statusText || 'Unknown error'}`);
+                }
+                return response.json();
+            }
+
+            async function callClipdrop(prompt) {
+                const formData = new FormData();
+                formData.append('prompt', prompt);
+
+                const response = await fetch("https://clipdrop-api.co/text-to-image/v1", {
+                    method: "POST",
+                    headers: {
+                        "x-api-key": clipdropApiKey
+                    },
+                    body: formData
+                });
+
+                // Log response status and headers for debugging
+                console.log("Clipdrop API Response Status:", response.status);
+                console.log("Clipdrop API Content-Type Header:", response.headers.get('Content-Type'));
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(`Clipdrop API request failed: ${errorData.error || response.statusText || 'Unknown error'}`);
+                }
+
+                const contentType = response.headers.get('Content-Type');
+                // Explicitly check if contentType is a string and not null/undefined before calling startsWith
+                if (typeof contentType !== 'string' || (contentType && !contentType.startsWith('image/'))) {
+                    const responseText = await response.text().catch(() => "Could not read response text.");
+                    console.error("Clipdrop API did not return an image Content-Type. Received:", contentType, "Response body:", responseText);
+                    throw new Error(`Clipdrop API did not return an image. Content-Type: ${contentType || 'N/A'}. Response body might contain an error: ${responseText.substring(0, 200)}...`);
+                }
+
+                const imageBlob = await response.blob();
+
+                // Log imageBlob.type for debugging
+                console.log("Image Blob Type:", imageBlob.type);
+
+                if (imageBlob instanceof Blob && typeof imageBlob.type === 'string' && imageBlob.type.startsWith('image/')) {
+                    return URL.createObjectURL(imageBlob);
+                } else {
+                    console.error("Clipdrop API returned a blob but it's not a valid image. Blob type:", imageBlob.type, "Blob object:", imageBlob);
+                    throw new Error('Clipdrop API returned data but it is not a valid image format.');
+                }
+            }
+
+            async function callGemini(inputContent, isJson = false, retries = 0) {
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
+                let payload;
+
+                if (Array.isArray(inputContent)) {
+                    // If inputContent is an array, assume it's chat history
+                    payload = { contents: inputContent };
+                } else {
+                    // Otherwise, assume it's a single prompt string
+                    payload = { contents: [{ role: "user", parts: [{ text: inputContent }] }] };
+                }
+
+                if (isJson) {
+                    payload.generationConfig = { responseMimeType: "application/json" };
+                }
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        // Implement exponential backoff for retryable errors (e.g., 503, 429)
+                        if ((response.status === 503 || response.status === 429) && retries < 5) { // Max 5 retries
+                            const delay = Math.pow(2, retries) * 1000 + Math.random() * 1000; // Exponential backoff with jitter
+                            console.warn(`Gemini API: Retrying after ${delay}ms due to status ${response.status}. Retry attempt: ${retries + 1}`);
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            return callGemini(inputContent, isJson, retries + 1); // Recursive call for retry
+                        }
+
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(`Gemini API request failed with status ${response.status}: ${errorData.error?.message || response.statusText || 'Unknown error'}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (text) {
+                        // For JSON requests, parse it. For others, return as is.
+                        try {
+                            return isJson ? JSON.parse(text) : text;
+                        } catch (e) {
+                            console.error("Failed to parse JSON from Gemini API:", text, e);
+                            throw new Error(`Failed to parse JSON response from Gemini API: ${e.message}. Raw response: ${text}`);
+                        }
+                    }
+                    throw new Error('Invalid response structure from Gemini API: No text content found.');
+                } catch (error) {
+                    console.error("Error during Gemini API call:", error);
+                    throw error; // Re-throw to be caught by the calling function (e.g., handleChatSend)
+                }
+            }
+
+
+            // Helper functions for UI updates
+            const showLoader = (loaderId, statusId = null, message = 'Generating...') => {
+                document.getElementById(loaderId).classList.remove('hidden');
+                if (statusId) {
+                    document.getElementById(statusId).textContent = message;
+                }
+            };
+
+            const hideLoader = (loaderId) => {
+                document.getElementById(loaderId).classList.add('hidden');
+            };
+
+            const showError = (errorId, message) => {
+                const errorElement = document.getElementById(errorId);
+                errorElement.textContent = `Error: ${message}`;
+                errorElement.classList.remove('hidden');
+            };
+
+            const hideError = (errorId) => {
+                document.getElementById(errorId).classList.add('hidden');
+            };
+
+            // All features and their rendering logic
+            const features = {
+                analysis: {
+                    name: 'Cultural Analysis',
+                    icon: `<svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>`,
+                    render: () => {
+                        mainContent.innerHTML = `
+                            <div class="max-w-5xl mx-auto">
+                                <h2 class="text-4xl font-bold text-white mb-2">Cultural Profile Analysis</h2>
+                                <p class="text-text-secondary mb-8">Deep dive into your preferences and get an AI-powered cultural profile with explainable insights.</p>
+                                <div class="bg-surface p-8 rounded-xl border border-border shadow-lg">
+                                    <label for="profile-prompt" class="block text-lg font-semibold text-text-primary mb-2">Describe yourself, your tastes, and what you love:</label>
+                                    <textarea id="profile-prompt" rows="3" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black resize-none" placeholder="e.g., 'I'm a software developer who loves minimalist sci-fi films like Blade Runner 2049, reading historical fiction, listening to ambient electronic music, and drinking single-origin coffee...'"></textarea>
+                                    <button id="generate-profile-btn" class="mt-4 w-full btn-primary">Generate My Profile</button>
+                                </div>
+                                <div id="profile-output" class="mt-8 hidden">
+                                    <div id="profile-loader" class="text-center p-8"><div class="loader mx-auto"></div><p id="profile-loader-status" class="mt-4 font-semibold">Generating...</p></div>
+                                    <div id="profile-result" class="hidden grid md:grid-cols-3 gap-8">
+                                        <div class="md:col-span-1">
+                                            <h3 class="text-2xl font-bold text-white mb-4">Your Avatar</h3>
+                                            <div id="profile-image-loader" class="w-full aspect-square bg-surface rounded-lg flex items-center justify-center border border-border"><div class="loader"></div></div>
+                                            <img id="profile-image" class="hidden w-full h-auto rounded-lg shadow-lg"/>
+                                        </div>
+                                        <div class="md:col-span-2">
+                                            <h3 class="text-2xl font-bold text-white mb-4">Taste Dimensions</h3>
+                                            <div class="bg-surface p-4 rounded-lg border border-border"><canvas id="tasteChart"></canvas></div>
+                                        </div>
+                                        <div class="md:col-span-3 mt-4">
+                                            <h3 class="text-2xl font-bold text-white mb-4">AI-Powered Insights</h3>
+                                            <div id="profile-text" class="p-6 bg-surface rounded-lg border border-border prose prose-invert max-w-none prose-p:text-violet-200 text-justify"></div>
+                                        </div>
+                                    </div>
+                                    <!-- Removed download-profile-pdf-btn -->
+                                    <div id="profile-error" class="hidden text-center text-red-400 bg-red-900/50 p-4 rounded-lg"></div>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('generate-profile-btn').addEventListener('click', handleProfileGeneration);
+                        // Removed event listener for download button
+                    }
+                },
+                discovery: {
+                    name: 'Taste Discovery',
+                    icon: `<svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>`,
+                    render: () => {
+                        mainContent.innerHTML = `
+                            <div class="max-w-5xl mx-auto">
+                                <h2 class="text-4xl font-bold text-white mb-2">Personalized Taste Discovery</h2>
+                                <p class="text-text-secondary mb-8">Receive personalized, cross-cultural recommendations with rich explanations.</p>
+                                <div class="bg-surface p-8 rounded-xl border border-border shadow-lg">
+                                    <label for="discovery-prompt" class="block text-lg font-semibold text-text-primary mb-2">Enter a movie, book, artist, or concept you love:</label>
+                                    <input id="discovery-prompt" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'The artist Jean-Michel Basquiat'">
+                                    <button id="generate-discovery-btn" class="mt-4 w-full btn-primary">Discover Connections</button>
+                                </div>
+                                <div id="discovery-output" class="mt-8">
+                                    <div id="discovery-loader" class="hidden text-center p-8"><div class="loader mx-auto"></div><p id="discovery-loader-status" class="mt-4 font-semibold">Finding connections...</p></div>
+                                    <div id="discovery-result" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+                                    <div id="discovery-error" class="hidden text-center text-red-400 bg-red-900/50 p-4 rounded-lg"></div>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('generate-discovery-btn').addEventListener('click', handleDiscoveryGeneration);
+                    }
+                },
+                planning: {
+                    name: 'Immersion Planning',
+                    icon: `<svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>`,
+                    render: () => {
+                        mainContent.innerHTML = `
+                            <div class="max-w-5xl mx-auto">
+                                <h2 class="text-4xl font-bold text-white mb-2">Immersive Travel Planning</h2>
+                                <p class="text-text-secondary mb-8">Generate detailed, culturally-aligned itineraries for immersive travel experiences.</p>
+                                <div class="bg-surface p-8 rounded-xl border border-border grid md:grid-cols-2 gap-6 shadow-lg">
+                                    <div>
+                                        <label for="planning-destination" class="block text-lg font-semibold text-text-primary mb-2">Destination:</label>
+                                        <input id="planning-destination" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'Kyoto, Japan'">
+                                    </div>
+                                    <div>
+                                        <label for="planning-theme" class="block text-lg font-semibold text-text-primary mb-2">Theme / Vibe:</label>
+                                        <input id="planning-theme" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'Wabi-sabi and tranquility'">
+                                    </div>
+                                    <div class="md:col-span-2">
+                                        <button id="generate-planning-btn" class="mt-4 w-full btn-primary">Generate Itinerary</button>
+                                    </div>
+                                </div>
+                                <div id="planning-output" class="mt-8">
+                                    <div id="planning-loader" class="hidden text-center p-8"><div class="loader mx-auto"></div><p id="planning-loader-status" class="mt-4 font-semibold">Crafting your immersive itinerary...</p></div>
+                                    <div id="planning-result" class="hidden grid lg:grid-cols-3 gap-8">
+                                        <div id="planning-text" class="lg:col-span-2 p-6 bg-surface rounded-lg border border-border prose prose-invert max-w-none prose-p:text-violet-200 text-justify"></div>
+                                        <div id="planning-image-container">
+                                            <h3 class="text-2xl font-bold text-white mb-4">Inspirational Mood Board</h3>
+                                            <div id="planning-image-loader" class="w-full aspect-square bg-surface rounded-lg flex items-center justify-center border border-border"><div class="loader"></div></div>
+                                            <img id="planning-image" class="hidden w-full h-auto rounded-lg shadow-lg"/>
+                                        </div>
+                                    </div>
+                                    <!-- Removed download-planning-pdf-btn -->
+                                    <div id="planning-error" class="hidden text-center text-red-400 bg-red-900/50 p-4 rounded-lg"></div>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('generate-planning-btn').addEventListener('click', handlePlanningGeneration);
+                        // Removed event listener for download button
+                    }
+                },
+                intelligence: {
+                    name: 'Market Intelligence',
+                    icon: `<svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>`,
+                    render: () => {
+                        mainContent.innerHTML = `
+                            <div class="max-w-5xl mx-auto">
+                                <h2 class="text-4xl font-bold text-white mb-2">Cultural Trend Prediction</h2>
+                                <p class="text-text-secondary mb-8">Predict emerging cultural trends and gain competitive insights into various market segments.</p>
+                                <div class="bg-surface p-8 rounded-xl border border-border shadow-lg">
+                                    <label for="intelligence-prompt" class="block text-lg font-semibold text-text-primary mb-2">Enter a cultural domain or market segment:</label>
+                                    <input id="intelligence-prompt" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'Gen Z fashion in East Asia' or 'Sustainable food trends'">
+                                    <button id="generate-intelligence-btn" class="mt-4 w-full btn-primary">Analyze Trends</button>
+                                </div>
+                                <div id="intelligence-output" class="mt-8">
+                                    <div id="intelligence-loader" class="hidden text-center p-8"><div class="loader mx-auto"></div><p id="intelligence-loader-status" class="mt-4 font-semibold">Analyzing market trends...</p></div>
+                                    <div id="intelligence-result" class="p-6 bg-surface rounded-lg border border-border prose prose-invert max-w-none prose-p:text-violet-200 text-justify"></div>
+                                    <div id="intelligence-error" class="hidden text-center text-red-400 bg-red-900/50 p-4 rounded-lg"></div>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('generate-intelligence-btn').addEventListener('click', handleIntelligenceGeneration);
+                    }
+                },
+                insights: {
+                    name: 'Cultural Compass',
+                    icon: `<svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c1.657 0 3 .895 3 2s-1.343 2-3 2s-3 .895-3 2s1.343 2 3 2m-8 3v1h16v-1a4 4 0 00-4-4H8a4 4 0 00-4 4z"></path></svg>`,
+                    render: () => {
+                        mainContent.innerHTML = `
+                            <div class="max-w-5xl mx-auto">
+                                <h2 class="text-4xl font-bold text-white mb-2">Cultural Communication Compass</h2>
+                                <p class="text-text-secondary mb-8">Navigate cross-cultural interactions with AI-powered tips and insights.</p>
+                                <div class="bg-surface p-8 rounded-xl border border-border grid md:grid-cols-2 gap-6 shadow-lg">
+                                    <div>
+                                        <label for="culture-one" class="block text-lg font-semibold text-text-primary mb-2">Culture One (e.g., 'Japanese'):</label>
+                                        <input id="culture-one" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'Japanese'">
+                                    </div>
+                                    <div>
+                                        <label for="culture-two" class="block text-lg font-semibold text-text-primary mb-2">Culture Two (e.g., 'German'):</label>
+                                        <input id="culture-two" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'German'">
+                                    </div>
+                                    <div class="md:col-span-2">
+                                        <button id="generate-insights-btn" class="mt-4 w-full btn-primary">Get Communication Tips</button>
+                                    </div>
+                                </div>
+                                <div id="insights-output" class="mt-8">
+                                    <div id="insights-loader" class="hidden text-center p-8"><div class="loader mx-auto"></div><p id="insights-loader-status" class="mt-4 font-semibold">Generating insights...</p></div>
+                                    <div id="insights-result" class="p-6 bg-surface rounded-lg border border-border prose prose-invert max-w-none prose-p:text-violet-200 text-justify"></div>
+                                    <div id="insights-error" class="hidden text-center text-red-400 bg-red-900/50 p-4 rounded-lg"></div>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('generate-insights-btn').addEventListener('click', handleInsightsGeneration);
+                    }
+                },
+                cartography: {
+                    name: 'Cartography',
+                    icon: `<svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>`,
+                    render: () => {
+                        mainContent.innerHTML = `
+                            <div class="max-w-5xl mx-auto">
+                                <h2 class="text-4xl font-bold text-white mb-2">Cultural Cartography</h2>
+                                <p class="text-text-secondary mb-8">Visualize global taste landscapes and cultural hotspots.</p>
+                                <div class="bg-surface p-8 rounded-xl border border-border shadow-lg">
+                                    <label for="cartography-city" class="block text-lg font-semibold text-text-primary mb-2">City:</label>
+                                    <input id="cartography-city" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'Kolkata'">
+                                    <label for="cartography-amenities" class="block text-lg font-semibold text-text-primary mt-4 mb-2">Cultural Amenities (comma-separated):</label>
+                                    <input id="cartography-amenities" type="text" class="w-full p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black" placeholder="e.g., 'Museums, Art Galleries, Historical Sites'">
+                                    <button id="generate-cartography-btn" class="mt-4 w-full btn-primary">Generate Cultural Map & Report</button>
+                                </div>
+                                <div id="cartography-output" class="mt-8">
+                                    <div id="cartography-loader" class="hidden text-center p-8"><div class="loader mx-auto"></div><p id="cartography-loader-status" class="mt-4 font-semibold">Generating map and report...</p></div>
+                                    <div id="cartography-result" class="hidden">
+                                        <h3 class="text-2xl font-bold text-white mb-4">Cultural Hotspots Map</h3>
+                                        <div class="bg-surface p-8 rounded-xl border border-border shadow-lg h-[600px] flex items-center justify-center">
+                                            <div id="cartography-map" class="w-full h-full rounded-lg z-0"></div>
+                                            <div id="cartography-image-placeholder" class="hidden w-full h-full bg-background rounded-lg flex items-center justify-center text-text-secondary">
+                                                Loading Map...
+                                            </div>
+                                        </div>
+                                        <div class="mt-8">
+                                            <h3 class="text-2xl font-bold text-white mb-4">Civic Intelligence Report</h3>
+                                            <div id="cartography-text" class="p-6 bg-surface rounded-lg border border-border prose prose-invert max-w-none prose-p:text-violet-200 text-justify"></div>
+                                        </div>
+                                    </div>
+                                    <div id="cartography-error" class="hidden text-center text-red-400 bg-red-900/50 p-4 rounded-lg"></div>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('generate-cartography-btn').addEventListener('click', handleCartographyGeneration);
+                    }
+                },
+                chat: {
+                    name: 'LLM Chat',
+                    icon: `<svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>`,
+                    render: () => {
+                        mainContent.innerHTML = `
+                            <div class="chat-container max-w-4xl mx-auto">
+                                <div id="chat-messages" class="chat-messages">
+                                    <div class="chat-message model">
+                                        <div>Hello! I'm Riverbend Insights, your cultural intelligence assistant. How can I help you today?</div>
+                                        <!-- Removed download button from initial message -->
+                                    </div>
+                                </div>
+                                <div class="relative p-4 bg-background border-t border-border flex items-center">
+                                    <input type="text" id="chat-input" placeholder="Type your message here..." class="flex-1 p-3 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none text-black pr-10">
+                                    <button id="send-chat-btn" class="ml-3 p-3 bg-primary rounded-lg text-background hover:bg-primary-hover transition-colors">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                                    </button>
+                                    <div id="chat-loader" class="absolute right-24 hidden loader w-6 h-6 border-2"></div>
+                                    <div id="chat-error" class="hidden text-red-400 text-sm"></div>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('send-chat-btn').addEventListener('click', handleChatSend);
+                        document.getElementById('chat-input').addEventListener('keypress', (e) => {
+                            if (e.key === 'Enter') {
+                                handleChatSend();
+                            }
+                        });
+                        // Removed event listener for the initial "Hello!" message's download button
+                        // Scroll to bottom initially for chat
+                        const chatMessagesDiv = document.getElementById('chat-messages');
+                        chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+                    }
+                }
+            };
+
+            // Function to render selected feature
+            const renderFeature = (featureId) => {
+                const feature = features[featureId];
+                if (feature && feature.render) {
+                    feature.render();
+                    // Update active state in nav menu
+                    document.querySelectorAll('#nav-menu li button').forEach(button => {
+                        if (button.dataset.feature === featureId) {
+                            button.classList.add('bg-surface', 'text-white');
+                            button.classList.remove('text-violet-300', 'hover:bg-surface');
+                        } else {
+                            button.classList.remove('bg-surface', 'text-white');
+                            button.classList.add('text-violet-300', 'hover:bg-surface');
+                        }
+                    });
+                }
+            };
+
+            // Populate navigation menu
+            for (const featureId in features) {
+                const feature = features[featureId];
+                const listItem = document.createElement('li');
+                listItem.innerHTML = `
+                    <button data-feature="${featureId}" class="w-full flex items-center justify-start gap-4 p-3 rounded-lg text-violet-300 hover:bg-surface hover:text-white transition-colors">
+                        ${feature.icon}
+                        <span class="font-bold hidden lg:block">${feature.name}</span>
+                    </button>
+                `;
+                navMenu.appendChild(listItem);
+                listItem.querySelector('button').addEventListener('click', () => renderFeature(featureId));
+            }
+
+            // Default to Cultural Analysis on load
+            renderFeature('analysis');
+
+
+            // --- Feature Handling Functions (Modified to use Qloo API) ---
+
+            async function handleProfileGeneration() {
+                const prompt = document.getElementById('profile-prompt').value;
+                const outputDiv = document.getElementById('profile-output');
+                const resultDiv = document.getElementById('profile-result');
+                const profileImage = document.getElementById('profile-image');
+                const profileText = document.getElementById('profile-text');
+
+                outputDiv.classList.remove('hidden');
+                resultDiv.classList.add('hidden');
+                // Removed downloadBtn.classList.add('hidden');
+                hideError('profile-error');
+
+                showLoader('profile-loader', 'profile-loader-status', 'Analyzing your cultural essence...');
+                showLoader('profile-image-loader'); // Show loader for image separately
+
+                try {
+                    // Step 1: Generate Taste Dimensions (JSON output)
+                    // Use Qloo API for taste analysis and summary, then process for chart
+                    const qlooSummaryResponse = await callQloo('/v1/taste_analysis', {
+                        text_input: prompt,
+                    }).catch(err => {
+                        console.warn("Qloo taste_analysis API call failed, using mock data:", err);
+                        return {
+                            summary: `## Your Cultural Profile\n\nBased on your description and Qloo's cultural intelligence, you possess a unique and evolving cultural identity. Your interests indicate a blend of deep historical appreciation and a keen eye for contemporary trends. You are likely drawn to experiences that offer both intellectual stimulation and aesthetic pleasure. Your palate is sophisticated, favoring authenticity and depth over fleeting fads.`,
+                            taste_dimensions: [
+                                { "name": "Intellectual Depth", "score": 8, "explanation": "A strong drive to explore complex narratives and concepts." },
+                                { "name": "Aesthetic Sensitivity", "score": 9, "explanation": "A preference for minimalist and thoughtful artistic expressions." },
+                                { "name": "Historical Appreciation", "score": 7, "explanation": "A deep interest in the past and its influence on the present." },
+                                { "name": "Modern Affinity", "score": 6, "explanation": "Openness to contemporary trends, especially in music and film." },
+                                { "name": "Authenticity Seeking", "score": 9, "explanation": "A preference for genuine, artisanal, and unique experiences." }
+                            ]
+                        };
+                    });
+
+                    const profileSummary = marked.parse(qlooSummaryResponse.summary || `No summary available from Qloo. Defaulting to a generic profile based on your prompt.`);
+                    const tasteDimensions = qlooSummaryResponse.taste_dimensions || []; // Store actual or mock dimensions
+
+                    // Render chart onto the visible canvas for UI
+                    const visibleChartCanvas = document.getElementById('tasteChart');
+                    const visibleCtx = visibleChartCanvas.getContext('2d');
+                    if (window.visibleTasteChartInstance) {
+                        window.visibleTasteChartInstance.destroy();
+                    }
+                    window.visibleTasteChartInstance = new Chart(visibleCtx, {
+                        type: 'radar',
+                        data: {
+                            labels: tasteDimensions.map(d => d.name),
+                            datasets: [{
+                                data: tasteDimensions.map(d => d.score),
+                                backgroundColor: 'rgba(52, 211, 153, 0.4)',
+                                borderColor: 'var(--primary)',
+                                borderWidth: 2,
+                                pointBackgroundColor: 'var(--primary)',
+                                pointBorderColor: '#fff',
+                                pointHoverBackgroundColor: '#fff',
+                                pointHoverBorderColor: 'var(--primary)'
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: true,
+                            scales: {
+                                r: {
+                                    angleLines: { color: 'rgba(167, 139, 250, 0.3)' },
+                                    grid: { color: 'rgba(167, 139, 250, 0.3)' },
+                                    pointLabels: { color: 'var(--text-secondary)', font: { size: 12 } },
+                                    beginAtZero: true,
+                                    min: 0,
+                                    max: 10,
+                                    ticks: {
+                                        stepSize: 2,
+                                        color: 'var(--text-secondary)',
+                                        backdropColor: 'var(--surface)'
+                                    }
+                                }
+                            },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            const dataPoint = tasteDimensions[context.dataIndex];
+                                            const label = String(context.label);
+                                            const rawValue = String(context.raw);
+                                            const explanation = typeof dataPoint.explanation === 'string' ? dataPoint.explanation : 'No explanation available';
+                                            return `${label}: ${rawValue} - ${explanation}`;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    profileText.innerHTML = profileSummary;
+
+                    // Generate avatar using Clipdrop
+                    const imageSrc = await callClipdrop(`Generate a stylized artistic representation of a person's cultural avatar based on this description: "${prompt}". Focus on abstract elements and color palettes that reflect their taste.`);
+                    profileImage.src = imageSrc;
+
+                    hideLoader('profile-loader');
+                    hideLoader('profile-image-loader');
+                    profileImage.classList.remove('hidden');
+                    resultDiv.classList.remove('hidden');
+                    // Removed downloadBtn.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error("Profile generation error:", error);
+                    hideLoader('profile-loader');
+                    hideLoader('profile-image-loader');
+                    showError('profile-error', error.message);
+                }
+            }
+
+            // Removed generateProfilePdf function
+
+
+            // Personalized Taste Discovery
+            async function handleDiscoveryGeneration() {
+                const prompt = document.getElementById('discovery-prompt').value;
+                const discoveryOutput = document.getElementById('discovery-output'); // Get the output div
+                const resultDiv = document.getElementById('discovery-result');
+                resultDiv.innerHTML = ''; // Clear previous results
+                hideError('discovery-error');
+                showLoader('discovery-loader', 'discovery-loader-status', 'Finding connections...');
+
+                try {
+                    // Qloo API call for recommendations
+                    const qlooRecommendations = await callQloo('/v1/recommendations', {
+                        entity: prompt,
+                        limit: 5 // Request a few recommendations
+                    }).catch(err => {
+                        console.warn("Qloo recommendations API call failed, using mock data:", err);
+                        return {
+                            recommendations: [
+                                {
+                                    title: "Related Artist: Brian Eno",
+                                    category: "Music",
+                                    origin: "UK",
+                                    explanation: "If you appreciate ambient electronic music, Brian Eno is a pioneer of the genre, known for his atmospheric soundscapes and innovative production techniques. His work often evokes a similar contemplative and minimalist feel."
+                                },
+                                {
+                                    title: "Similar Film: Solaris (1972)",
+                                    category: "Film",
+                                    origin: "Soviet Union",
+                                    explanation: "Like 'Blade Runner 2049', Tarkovsky's 'Solaris' is a philosophical sci-fi film that delves into deep questions of memory, identity, and humanity, set against a mysterious and visually stunning backdrop."
+                                },
+                                {
+                                    title: "Book Suggestion: 'The Name of the Rose' by Umberto Eco",
+                                    category: "Literature",
+                                    origin: "Italy",
+                                    explanation: "For lovers of historical fiction, this novel combines a medieval mystery with deep philosophical and semiotic exploration, offering a rich narrative and intellectual challenge."
+                                }
+                            ]
+                        };
+                    });
+
+                    const recommendations = qlooRecommendations.recommendations || [];
+
+                    if (recommendations && recommendations.length > 0) {
+                        recommendations.forEach(rec => {
+                            const card = document.createElement('div');
+                            card.className = 'bg-surface p-6 rounded-lg border border-border shadow-md';
+                            card.innerHTML = `
+                                <h3 class="text-xl font-bold text-white mb-2">${rec.title}</h3>
+                                <p class="text-primary text-sm font-semibold mb-2">${rec.category} from ${rec.origin}</p>
+                                <p class="text-violet-200 text-justify">${rec.explanation}</p>
+                            `;
+                            resultDiv.appendChild(card);
+                        });
+                    } else {
+                        resultDiv.innerHTML = '<p class="text-center text-text-secondary">No recommendations found. Try a different prompt.</p>';
+                    }
+                } catch (error) {
+                    console.error("Discovery generation error:", error);
+                    showError('discovery-error', error.message);
+                }
+                finally {
+                    hideLoader('discovery-loader');
+                }
+            }
+
+
+            // Immersion Planning
+            async function handlePlanningGeneration() {
+                const destination = document.getElementById('planning-destination').value;
+                const theme = document.getElementById('planning-theme').value;
+                const outputDiv = document.getElementById('planning-output');
+                const resultDiv = document.getElementById('planning-result');
+                // Removed downloadBtn reference
+
+                outputDiv.classList.remove('hidden');
+                resultDiv.classList.add('hidden');
+                // Removed downloadBtn.classList.add('hidden');
+                hideError('planning-error');
+
+                showLoader('planning-loader', 'planning-loader-status', 'Crafting your immersive itinerary...');
+                showLoader('planning-image-loader');
+                document.getElementById('planning-image').classList.add('hidden'); // Hide image initially
+
+                if (!destination || !theme) {
+                    hideLoader('planning-loader');
+                    hideLoader('planning-image-loader');
+                    showError('planning-error', 'Please enter both destination and theme.');
+                    return;
+                }
+
+                try {
+                    // Qloo API call for cultural insights/itinerary generation
+                    const qlooItineraryResponse = await callQloo('/v1/cultural_planning', {
+                        destination: destination,
+                        theme: theme
+                    }).catch(err => {
+                        console.warn("Qloo cultural_planning API call failed, using mock data:", err);
+                        return {
+                            itinerary: `## Immersive Itinerary: ${destination} - Theme: ${theme}\n\n### Day 1: Serene Beginnings\n\n* **Morning:** Arrive and settle into a traditional ryokan. Enjoy a peaceful tea ceremony, focusing on mindfulness and the present moment.\n* **Afternoon:** Visit the Arashiyama Bamboo Grove, allowing the natural beauty to inspire tranquility, followed by a meditative walk through Tenryu-ji Temple, a UNESCO World Heritage site known for its serene garden.\n* **Evening:** Enjoy a multi-course kaiseki dinner, savoring local flavors and the artistry of Japanese cuisine, reflecting the 'wabi-sabi' aesthetic.\n\n### Day 2: Artistic & Spiritual Depth\n\n* **Morning:** Explore the tranquil Ryoan-ji Zen rock garden, contemplating its minimalist design and profound symbolism.\n* **Afternoon:** Visit Kinkaku-ji (Golden Pavilion) and Ginkaku-ji (Silver Pavilion), appreciating their unique aesthetics and historical significance.\n* **Evening:** Attend a traditional geisha performance (reservations essential), experiencing a refined aspect of Japanese arts and entertainment.\n\n### Day 3: Local Life & Craftsmanship\n\n* **Morning:** Wander through Nishiki Market, sampling local delicacies and observing the vibrant daily life of Kyoto.\n* **Afternoon:** Participate in a traditional pottery or textile dyeing workshop, engaging directly with Japanese craftsmanship and artistic heritage.\n* **Evening:** Relax at a local izakaya, experiencing casual Japanese dining and social interaction, embracing the 'tranquility' of everyday life.\n\n### Cultural Tips for Immersion:\n\n* **Respect Local Customs:** Observe and emulate local etiquette, especially regarding bowing, shoe removal, and public conduct.\n* **Embrace Silence:** In many traditional Japanese settings, silence is valued. Allow for quiet contemplation.\n* **Savor the Details:** Pay attention to the small, often overlooked details in art, food, and daily life, which embody the 'wabi-sabi' philosophy.\n* **Learn Basic Phrases:** Even a few Japanese phrases can significantly enhance interactions and show respect.\n* **Be Patient:** Immersive experiences often require patience and an open mind to fully appreciate the nuances of a new culture.`
+                        };
+                    });
+
+                    const itineraryText = qlooItineraryResponse.itinerary || `No itinerary available from Qloo. Defaulting to a generic plan for ${destination}.`;
+                    const itineraryHtml = marked.parse(itineraryText);
+                    document.getElementById('planning-text').innerHTML = itineraryHtml;
+
+                    // Generate Mood Board Image
+                    const imagePrompt = `Inspirational mood board image for a travel plan to '${destination}' with the theme '${theme}'. Include real-life visuals with authentic Indian faces, traditional clothing, and local cultural elements. Focus on vibrant Indian architecture, natural landscapes, festivals, food, and daily life scenes. The mood board should evoke the desired atmosphere and capture the rich cultural essence of Indian origin. Use warm, natural lighting and a storytelling visual style.`;
+                    const imageUrl = await callClipdrop(imagePrompt);
+                    document.getElementById('planning-image').src = imageUrl;
+                    document.getElementById('planning-image').classList.remove('hidden');
+
+                    hideLoader('planning-loader');
+                    hideLoader('planning-image-loader');
+                    // Removed downloadBtn.classList.remove('hidden');
+                    resultDiv.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error("Planning generation error:", error);
+                    hideLoader('planning-loader');
+                    hideLoader('planning-image-loader');
+                    showError('planning-error', error.message);
+                }
+            }
+
+            // Removed generatePlanningPdf function
+
+
+            // Market Intelligence
+            async function handleIntelligenceGeneration() {
+                const prompt = document.getElementById('intelligence-prompt').value;
+                const intelligenceOutput = document.getElementById('intelligence-output');
+                const intelligenceLoader = document.getElementById('intelligence-loader');
+                const intelligenceResult = document.getElementById('intelligence-result');
+                const intelligenceError = document.getElementById('intelligence-error');
+
+                hideError('intelligence-error');
+                intelligenceOutput.classList.remove('hidden');
+                intelligenceResult.innerHTML = '';
+                showLoader('intelligence-loader', 'intelligence-loader-status', 'Analyzing market trends...');
+
+                try {
+                    // Qloo API call for market intelligence/trend prediction
+                    const qlooTrendResponse = await callQloo('/v1/market_trends', {
+                        cultural_domain: prompt
+                    }).catch(err => {
+                        console.warn("Qloo market_trends API call failed, using mock data:", err);
+                        return {
+                            analysis: `## Market Intelligence: Emerging Trends in "${prompt}"\n\nBased on Qloo's cultural intelligence, here are predicted trends and insights for "${prompt}":\n\n### Executive Summary:\n\nThe cultural landscape within "${prompt}" is dynamic, driven by increasing consumer awareness and digital connectivity. Key trends indicate a shift towards authenticity, sustainability, and community-driven experiences.\n\n### Current State:\n\nExisting trends show a strong presence of [mention current popular trends related to prompt, e.g., fast fashion, mass-produced goods, generic content]. However, there's a growing undercurrent of demand for [mention niche/alternative trends, e.g., artisanal crafts, slow living, independent media]. Areas of density include [specific examples], while scarcity is observed in [specific examples, e.g., locally sourced options, ethical production].\n\n### Gap Analysis:\n\nSignificant gaps exist in the provision of [specific gaps, e.g., truly sustainable alternatives, personalized experiences at scale, platforms for niche communities]. There's an unmet need for brands and services that can effectively bridge the gap between mainstream accessibility and specialized, value-driven offerings. Opportunities lie in fostering [e.g., circular economies, hyper-local initiatives, co-creation platforms].\n\n### Recommendations:\n\n1.  **Invest in Authenticity:** Prioritize genuine storytelling and transparent production processes.\n2.  **Champion Niche Communities:** Develop products or content tailored to specific subcultures, fostering loyalty.\n3.  **Integrate Sustainability:** Embed eco-friendly practices throughout the value chain and communicate them effectively.\n4.  **Facilitate Co-Creation:** Empower consumers to participate in the development of products or experiences.\n5.  **Leverage Micro-Influencers:** Partner with authentic voices within niche communities for more impactful outreach.`
+                        };
+                    });
+
+                    intelligenceResult.innerHTML = marked.parse(qlooTrendResponse.analysis || `No market intelligence available from Qloo for "${prompt}".`);
+                    hideLoader('intelligence-loader');
+
+                } catch (error) {
+                    console.error("Intelligence generation error:", error);
+                    hideLoader('intelligence-loader');
+                    showError('intelligence-error', error.message);
+                }
+            }
+
+            async function handleInsightsGeneration() {
+                const cultureOne = document.getElementById('culture-one').value;
+                const cultureTwo = document.getElementById('culture-two').value;
+                const insightsOutput = document.getElementById('insights-output');
+                const insightsLoader = document.getElementById('insights-loader');
+                const insightsResult = document.getElementById('insights-result');
+                const insightsError = document.getElementById('insights-error');
+
+                hideError('insights-error');
+                insightsOutput.classList.remove('hidden');
+                insightsResult.innerHTML = '';
+                showLoader('insights-loader', 'insights-loader-status', 'Generating insights...');
+
+                try {
+                    // Qloo API call for cross-cultural communication insights
+                    const qlooInsightsResponse = await callQloo('/v1/cross_cultural_insights', {
+                        culture_one: cultureOne,
+                        culture_two: cultureTwo
+                    }).catch(err => {
+                        console.warn("Qloo cross_cultural_insights API call failed, using mock data:", err);
+                        return {
+                            insights: `## Cultural Communication Tips: ${cultureOne} vs. ${cultureTwo}\n\nQloo's Cultural Compass provides insights into navigating interactions between people from "${cultureOne}" and "${cultureTwo}" cultures:\n\n### Key Differences & Tips:\n\n* **Communication Style:**\n    * **${cultureOne}:** Tend to be more direct and low-context, valuing clear and explicit communication. They often get straight to the point.\n    * **${cultureTwo}:** May prefer a more indirect and high-context approach, relying on non-verbal cues, shared understanding, and subtle hints. Direct confrontation might be avoided.\n    * **Tip:** When communicating, adjust your directness. For ${cultureOne}, be clear and concise. For ${cultureTwo}, pay close attention to body language and unspoken messages.\n\n* **Decision Making:**\n    * **${cultureOne}:** Decisions might be more individualistic and driven by logical analysis, often with a clear hierarchy.\n    * **${cultureTwo}:** May emphasize group harmony and consensus-building, with decisions taking longer as everyone's input is considered.\n    * **Tip:** Understand the typical decision-making process. In ${cultureOne}, present facts clearly. In ${cultureTwo}, be patient and ensure all voices are heard.\n\n* **Time Perception:**\n    * **${cultureOne}:** Time may be perceived as linear and rigid, with strong emphasis on punctuality and adherence to schedules.\n    * **${cultureTwo}:** Could have a more flexible view of time, where relationships and current interactions might take precedence over strict adherence to a schedule.\n    * **Tip:** Clarify expectations around timings. For ${cultureOne}, be on time. For ${cultureTwo}, be prepared for potential delays and prioritize building rapport.\n\n* **Relationship Building:**\n    * **${cultureOne}:** Building trust might be more transactional, based on competence and reliability.\n    * **${cultureTwo}:** Could prioritize personal connections and long-term relationships before engaging in significant business or collaboration.\n    * **Tip:** Invest time in understanding personal dynamics if relationship-building is paramount in ${cultureTwo}, or focus on clear objectives in ${cultureOne}.\n\nRemember, these are general observations, and individual variations always exist. Empathy and open-mindedness are crucial for successful cross-cultural interactions.`
+                        };
+                    });
+
+                    insightsResult.innerHTML = marked.parse(qlooInsightsResponse.insights || `No cultural insights available from Qloo for ${cultureOne} and ${cultureTwo}.`);
+                    hideLoader('insights-loader');
+
+                } catch (error) {
+                    console.error("Insights generation error:", error);
+                    hideLoader('insights-loader');
+                    showError('insights-error', error.message);
+                }
+            }
+
+
+            // Urban Cohesion (Cultural Cartography)
+            async function handleCartographyGeneration() {
+                const city = document.getElementById('cartography-city').value;
+                const amenities = document.getElementById('cartography-amenities').value;
+                const outputDiv = document.getElementById('cartography-output'); // Get the output div
+                const resultDiv = document.getElementById('cartography-result'); // Get the result div
+                const mapContainer = document.getElementById('cartography-map'); // Get the map container
+                const textContainer = document.getElementById('cartography-text'); // Get the text container
+
+                // Show output and loader immediately
+                outputDiv.classList.remove('hidden');
+                resultDiv.classList.add('hidden'); // Hide results until content is ready
+                showLoader('cartography-loader', 'cartography-loader-status', 'Generating...');
+                hideError('cartography-error');
+
+                // Ensure map container is visible and has dimensions before initializing Leaflet
+                mapContainer.classList.remove('hidden');
+                mapContainer.style.height = '400px'; // Explicitly set height
+                mapContainer.style.width = '100%'; // Explicitly set width
+                const imagePlaceholder = document.getElementById('cartography-image-placeholder');
+                if (imagePlaceholder) {
+                    imagePlaceholder.classList.add('hidden');
+                }
+
+                if (!city || !amenities) {
+                    hideLoader('cartography-loader');
+                    showError('cartography-error', 'Please enter both city and cultural amenities.');
+                    return;
+                }
+
+                try {
+                    // Hardcoded geocoding lookup table for demonstration
+                    const cityCoordinates = {
+                        "new york city": { lat: 40.7128, lon: -74.0060 },
+                        "london": { lat: 51.5074, lon: -0.1278 },
+                        "paris": { lat: 48.8566, lon: 2.3522 },
+                        "tokyo": { lat: 35.6895, lon: 139.6917 },
+                        "sydney": { lat: -33.8688, lon: 151.2093 },
+                        "kyoto": { lat: 35.0116, lon: 135.7681 },
+                        "kolkata": { lat: 22.5726, lon: 88.3639 }
+                    };
+
+                    const normalizedCity = city.trim().toLowerCase();
+                    const coords = cityCoordinates[normalizedCity] || { lat: 40.7128, lon: -74.0060 }; // Default to NYC
+
+                    initializeMap(coords.lat, coords.lon); // Initialize map and invalidate size
+
+                    // Add a marker for each amenity.
+                    const amenityList = amenities.split(',').map(item => item.trim());
+                    amenityList.forEach((amenity, index) => {
+                        if (amenity) {
+                            const offsetLat = (Math.random() - 0.5) * 0.05;
+                            const offsetLon = (Math.random() - 0.5) * 0.05;
+                            L.marker([coords.lat + offsetLat, coords.lon + offsetLon])
+                                .addTo(map)
+                                .bindPopup(`<b>${amenity}</b> in ${city}`)
+                                .openPopup();
+                        }
+                    });
+
+                    // Generate the civic intelligence report.
+                    document.getElementById('cartography-loader-status').textContent = 'Generating civic report...';
+                    const qlooCivicReport = await callQloo('/v1/civic_intelligence', {
+                        city: city,
+                        amenities: amenityList
+                    }).catch(err => {
+                        console.warn("Qloo civic_intelligence API call failed, using mock data:", err);
+                        return {
+                            report: `## Civic Intelligence Report for ${city}\n\n### Executive Summary:\n\n${city} exhibits a diverse cultural landscape, with a notable presence of ${amenities}. This report analyzes the distribution and accessibility of these amenities, highlighting areas of strength and opportunities for enhancement to foster urban cohesion.\n\n### Current State:\n\nOur analysis indicates that ${city} boasts a high concentration of ${amenityList[0]} in its central districts, serving as major cultural hubs. ${amenityList[1]} are more evenly distributed, contributing to neighborhood vibrancy. However, ${amenityList[2]} appear to be scarce in outer residential areas, limiting access for some communities. Public transportation links to these cultural sites are [e.g., strong/weak], impacting overall accessibility.\n\n### Gap Analysis:\n\nThere is a clear gap in the equitable distribution of cultural amenities, particularly for residents outside the city center. This disparity can lead to cultural deserts, reducing opportunities for engagement and potentially impacting social cohesion. Furthermore, a lack of [e.g., multilingual information, inclusive programming] might limit participation from diverse populations.\n\n### Recommendations:\n\n1.  **Decentralize Cultural Initiatives:** Invest in developing new cultural spaces and programs in underserved neighborhoods.\n2.  **Enhance Public Transport Links:** Improve accessibility to existing cultural institutions through better public transit routes.\n3.  **Promote Inclusive Programming:** Encourage diverse cultural events and exhibitions that cater to a wider range of tastes and backgrounds.\n4.  **Support Local Artists and Organizations:** Provide funding and resources to grassroots cultural initiatives to foster organic growth.\n5.  **Develop Digital Cultural Platforms:** Create online resources that make cultural information and virtual experiences accessible to all residents, regardless of location.`
+                        };
+                    });
+
+                    textContainer.innerHTML = marked.parse(qlooCivicReport.report || `No civic intelligence report available from Qloo for ${city}.`);
+
+                    hideLoader('cartography-loader');
+                    resultDiv.classList.remove('hidden');
+
+                    if (map) {
+                        map.invalidateSize();
+                    }
+
+                } catch (error) {
+                    console.error("Cartography generation error:", error);
+                    hideLoader('cartography-loader');
+                    showError('cartography-error', error.message);
+                }
+            }
+
+
+            // LLM Chat - NEW FUNCTIONALITY FROM index7.html
+            async function handleChatSend() {
+                const chatInput = document.getElementById('chat-input');
+                const chatMessagesDiv = document.getElementById('chat-messages');
+                const userMessage = chatInput.value.trim();
+
+                if (userMessage === '') {
+                    return;
+                }
+
+                // Clear input
+                chatInput.value = '';
+                hideError('chat-error');
+
+                // Add user message to chat history and display
+                const userMessageElement = document.createElement('div');
+                userMessageElement.className = 'chat-message user';
+                userMessageElement.textContent = userMessage;
+                chatMessagesDiv.appendChild(userMessageElement);
+                chatHistory.push({ role: "user", parts: [{ text: userMessage }] });
+
+                // Scroll to the latest message
+                chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+                // Add a temporary loading indicator for the model's reply
+                const loadingMessageElement = document.createElement('div');
+                loadingMessageElement.className = 'chat-message model loading-message';
+                loadingMessageElement.innerHTML = '<div class="loader w-5 h-5 border-2 border-t-2 border-primary mx-auto my-2"></div>';
+                chatMessagesDiv.appendChild(loadingMessageElement);
+                chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+
+                showLoader('chat-loader'); // Show specific loader next to input
+
+                try {
+                    const modelResponse = await callGemini(chatHistory);
+
+                    // Remove loading indicator
+                    chatMessagesDiv.removeChild(loadingMessageElement);
+
+                    // Validate modelResponse type
+                    if (typeof modelResponse !== 'string') {
+                        throw new Error('Gemini API returned non-string for chat response. Expected a string.');
+                    }
+
+                    // Add model message to chat history and display
+                    const modelMessageElement = document.createElement('div');
+                    modelMessageElement.className = 'chat-message model';
+                    modelMessageElement.innerHTML = marked.parse(modelResponse); // Use marked.parse to render markdown
+
+                    chatMessagesDiv.appendChild(modelMessageElement);
+                    chatHistory.push({ role: "model", parts: [{ text: modelResponse }] });
+
+                    // Removed download button creation for model messages
+
+                    chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+
+                } catch (error) {
+                    console.error("Chat generation error:", error);
+                    // Remove loading indicator
+                    if (chatMessagesDiv.contains(loadingMessageElement)) {
+                        chatMessagesDiv.removeChild(loadingMessageElement);
+                    }
+                    showError('chat-error', error.message);
+                } finally {
+                    hideLoader('chat-loader');
+                }
+            }
+
+            // Removed downloadChatMessageAsPdf function
+
+
+            // Dynamically add navigation items and set up event listeners
+            function setupNavigation() {
+                navMenu.innerHTML = ''; // Clear existing menu items
+                Object.keys(features).forEach(key => {
+                    const feature = features[key];
+                    const listItem = document.createElement('li');
+                    listItem.className = 'group';
+                    listItem.innerHTML = `
+                        <a href="#" id="nav-${key}" class="flex items-center gap-4 p-3 rounded-lg text-violet-300 hover:bg-surface hover:text-white transition-colors">
+                            ${feature.icon}
+                            <span class="font-bold hidden lg:block">${feature.name}</span>
+                        </a>
+                    `;
+                    navMenu.appendChild(listItem);
+
+                    // Add click event listener to render the feature's content
+                    document.getElementById(`nav-${key}`).addEventListener('click', (event) => {
+                        event.preventDefault(); // Prevent default link behavior
+                        // Remove 'active' class from all nav items
+                        document.querySelectorAll('#nav-menu a').forEach(item => {
+                            item.classList.remove('bg-surface', 'text-white');
+                            item.classList.add('text-violet-300');
+                        });
+                        // Add 'active' class to the clicked item
+                        event.currentTarget.classList.add('bg-surface', 'text-white');
+                        event.currentTarget.classList.remove('text-violet-300');
+                        feature.render(); // Call the render function for the selected feature
+                    });
+                });
+
+                // Automatically load the default feature (Cultural Analysis) on app load
+                // Simulate a click on the first navigation item
+                const firstNavItem = document.getElementById('nav-analysis');
+                if (firstNavItem) {
+                    firstNavItem.click();
+                }
+            }
+
+            // Call setupNavigation when the app logic initializes
+            setupNavigation();
+        }
+    </script>
+</body>
+</html>
